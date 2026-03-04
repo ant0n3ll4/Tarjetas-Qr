@@ -734,6 +734,14 @@ function checkPin(){
 }
 
 // ══════════════════════════════════
+//  ENCODE / DECODE — datos van dentro del QR
+// ══════════════════════════════════
+function encodeClient(c){ return btoa(unescape(encodeURIComponent(JSON.stringify(c)))); }
+function decodeClient(str){
+  try { return JSON.parse(decodeURIComponent(escape(atob(str)))); } catch(e){ return null; }
+}
+
+// ══════════════════════════════════
 //  CLIENT SCREEN
 // ══════════════════════════════════
 let meClient = null;
@@ -749,7 +757,7 @@ async function loadClientById(){
   const id = document.getElementById('cIdInput').value.trim();
   if (!id){ toast('Ingresá tu ID de cliente'); return; }
   const c = await DB.get('client:'+id);
-  if (!c){ toast('No se encontró ese cliente'); return; }
+  if (!c){ toast('No se encontró ese cliente en este dispositivo'); return; }
   renderClientCard(c);
 }
 function renderClientCard(c){
@@ -758,10 +766,19 @@ function renderClientCard(c){
   document.getElementById('c-card').classList.remove('hidden');
   document.getElementById('lcName').textContent = c.name;
   document.getElementById('lcId').textContent = 'ID: ' + c.id;
+  generateClientQR(c);
+  refreshClientUI(c);
+}
+function generateClientQR(c){
   const el = document.getElementById('qrCode');
   el.innerHTML = '';
-  new QRCode(el, { text:c.id, width:180, height:180, colorDark:'#1B3A2D', colorLight:'#ffffff', correctLevel:QRCode.CorrectLevel.H });
-  refreshClientUI(c);
+  // QR contiene TODOS los datos codificados — funciona entre dispositivos
+  new QRCode(el, {
+    text: encodeClient(c),
+    width: 180, height: 180,
+    colorDark:'#1B3A2D', colorLight:'#ffffff',
+    correctLevel: QRCode.CorrectLevel.M
+  });
 }
 function refreshClientUI(c){
   const cyc = c.cycleVisits || 0;
@@ -783,6 +800,7 @@ async function clientRedeemCoupon(){
   if (!meClient) return;
   meClient.hasCoupon = false; meClient.couponCode = ''; meClient.cycleVisits = 0;
   await DB.set('client:'+meClient.id, meClient);
+  generateClientQR(meClient);
   refreshClientUI(meClient);
   toast('✓ Cupón canjeado — ¡nuevo ciclo iniciado!');
 }
@@ -871,11 +889,17 @@ function scanFrame(){
   }
 }
 
-async function onQRDetected(id){
-  // Buscar con el ID tal cual, y también intentar variantes por si hubo espacios
-  const cleanId = id.trim();
-  let c = await DB.get('client:'+cleanId);
+async function onQRDetected(raw){
+  // Intentar decodificar datos del QR (nuevo formato con datos completos)
+  const cleanRaw = raw.trim();
+  let c = decodeClient(cleanRaw);
+  if (!c){
+    // Fallback: intentar como ID directo (formato viejo)
+    c = await DB.get('client:'+cleanRaw);
+  }
   if (!c){ toast('⚠️ QR no reconocido — intentá acercar más la cámara'); lastId=null; return; }
+  // Guardar en admin también para tener historial
+  await DB.set('client:'+c.id, c);
   scannedClient = c; stopScanner(); showAdminResult(c);
 }
 async function adminSearchById(){
@@ -920,9 +944,39 @@ async function adminMarkVisit(){
   showAdminResult(scannedClient);
   const btn = document.getElementById('markBtn');
   btn.disabled = true; btn.textContent = '✓  Visita registrada';
+  // Mostrar nuevo QR actualizado para que el cliente lo guarde
+  showUpdatedQRModal(scannedClient);
   if (meClient && meClient.id === scannedClient.id){
-    meClient = scannedClient; refreshClientUI(meClient);
+    meClient = scannedClient; generateClientQR(meClient); refreshClientUI(meClient);
   }
+}
+
+function showUpdatedQRModal(c){
+  // Crear modal con el QR actualizado para que el cliente lo fotografíe
+  let modal = document.getElementById('updatedQRModal');
+  if (!modal){
+    modal = document.createElement('div');
+    modal.id = 'updatedQRModal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(10,25,18,0.85);display:flex;align-items:center;justify-content:center;z-index:9000;';
+    modal.innerHTML = `
+      <div style="background:#fff;border-radius:16px;padding:32px 24px;max-width:320px;width:90%;text-align:center;">
+        <div style="font-size:1.5rem;margin-bottom:8px;">📱</div>
+        <h3 style="font-family:Playfair Display,serif;font-size:1.2rem;color:#1B3A2D;margin-bottom:4px;">QR actualizado</h3>
+        <p style="font-size:0.7rem;letter-spacing:1px;color:#3D7A5A;margin-bottom:20px;">Pedile al cliente que fotografíe este QR con su celular — es su nueva tarjeta</p>
+        <div id="updatedQRCode" style="display:inline-block;padding:12px;background:#fff;border:1px solid rgba(27,58,45,0.13);border-radius:8px;margin-bottom:20px;"></div>
+        <div style="font-size:0.65rem;letter-spacing:2px;color:#C9A84C;margin-bottom:16px;">${c.name} · ${c.cycleVisits}/3 visitas</div>
+        <button onclick="document.getElementById('updatedQRModal').remove()" style="width:100%;padding:13px;background:#1B3A2D;color:#fff;border:none;border-radius:8px;font-family:DM Sans,sans-serif;font-size:0.65rem;letter-spacing:3px;text-transform:uppercase;cursor:pointer;">Listo ✓</button>
+      </div>`;
+    document.body.appendChild(modal);
+  }
+  const qrEl = document.getElementById('updatedQRCode');
+  qrEl.innerHTML = '';
+  new QRCode(qrEl, {
+    text: encodeClient(c),
+    width: 180, height: 180,
+    colorDark:'#1B3A2D', colorLight:'#ffffff',
+    correctLevel: QRCode.CorrectLevel.M
+  });
 }
 function clearResult(){
   scannedClient = null; lastId = null;
