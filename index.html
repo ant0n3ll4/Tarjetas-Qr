@@ -366,7 +366,7 @@
 // ══════════════════════════════════════════
 //  CONFIG
 // ══════════════════════════════════════════
-const ADMIN_PIN  = '1234';                          // ← Cambiá tu PIN acá
+const ADMIN_PIN  = '1309';                          // ← Cambiá tu PIN acá
 const BIN_ID     = '69a7c92443b1c97be9b1956f';
 const MASTER_KEY = '$2a$10$LxF6KbeUvFsZg38i/ypSdOIPeTrZpCUJXVMuZXRbPUwEYg7y/01Au';
 const BIN_URL    = `https://api.jsonbin.io/v3/b/${BIN_ID}`;
@@ -377,7 +377,8 @@ const HEADERS    = { 'Content-Type':'application/json', 'X-Master-Key': MASTER_K
 // ══════════════════════════════════════════
 async function dbRead(){
   try {
-    const r = await fetch(BIN_URL+'/latest', { headers: HEADERS });
+    // ?t= evita que el navegador o JSONBin devuelvan datos en caché
+    const r = await fetch(BIN_URL+'/latest?t='+Date.now(), { headers: HEADERS, cache:'no-store' });
     const j = await r.json();
     return j.record || { clientes:{} };
   } catch(e){ toast('Error de conexión — verificá tu internet'); return { clientes:{} }; }
@@ -589,7 +590,7 @@ async function clientUseCoupon(){
   c.hasCoupon=false; c.couponCode=''; c.cycleVisits=0;
   await saveClient(c);
   refreshCardUI(c);
-  toast('✓ Cupón canjeado — ¡nuevo ciclo iniciado!');
+  toast('✓ Cupón canjeado — ¡nuevo ciclo de 3 visitas iniciado!');
 }
 
 function resetClient(){
@@ -613,8 +614,9 @@ function loadAdminResult(c){
   document.getElementById('aRName').textContent = c.name;
   document.getElementById('aRId').textContent = 'ID: '+c.id;
   document.getElementById('aTotal').textContent = c.visits||0;
-  document.getElementById('aCycle').textContent = c.cycleVisits||0;
+  // Mostrar visitas del ciclo actual (0-3)
   const cyc = c.cycleVisits||0;
+  document.getElementById('aCycle').textContent = cyc + ' / 3';
   for(let i=1;i<=3;i++){
     const s=document.getElementById('as'+i);
     if(i<=cyc){ s.className='stamp-sm on'; s.textContent='✦'; }
@@ -626,6 +628,7 @@ function loadAdminResult(c){
   } else {
     document.getElementById('aCpnBar').classList.add('hidden');
   }
+  // Siempre resetear el botón para que se pueda volver a marcar
   const btn=document.getElementById('markBtn');
   btn.disabled=false; btn.textContent='✦  Registrar visita de hoy';
 }
@@ -635,20 +638,30 @@ async function markVisit(){
   const btn=document.getElementById('markBtn');
   btn.disabled=true; btn.textContent='⏳ Guardando...';
 
+  // Siempre traer datos frescos de la nube antes de incrementar
+  // Esto evita que dos visitas seguidas se pisen entre sí
+  const fresh = await getClient(activeClient.id);
+  if(fresh) activeClient = fresh;
+
   activeClient.visits = (activeClient.visits||0)+1;
   activeClient.cycleVisits = (activeClient.cycleVisits||0)+1;
 
-  if(activeClient.cycleVisits>=3 && !activeClient.hasCoupon){
-    activeClient.hasCoupon=true;
-    activeClient.couponCode=makeCoupon(activeClient.id);
+  // Si completó 3 visitas, generar cupón y reiniciar el ciclo
+  if(activeClient.cycleVisits>=3){
+    if(!activeClient.hasCoupon){
+      activeClient.hasCoupon=true;
+      activeClient.couponCode=makeCoupon(activeClient.id);
+    }
+    // Reiniciar ciclo para la próxima ronda de 3
+    activeClient.cycleVisits=0;
   }
 
   await saveClient(activeClient);
   loadAdminResult(activeClient);
   btn.disabled=true; btn.textContent='✓  Visita guardada en la nube';
 
-  if(activeClient.hasCoupon && activeClient.cycleVisits>=3){
-    toast('🎉 ¡3 visitas completas! Cupón 50% generado y guardado');
+  if(activeClient.hasCoupon){
+    toast('🎉 ¡3 visitas completas! Cupón 50% listo para canjear');
   } else {
     toast('✦ Visita registrada — faltan '+(3-activeClient.cycleVisits)+' para el cupón');
   }
@@ -739,3 +752,4 @@ function switchTab(tab){
 </script>
 </body>
 </html>
+
